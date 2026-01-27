@@ -542,8 +542,9 @@ module ActiveRecord
           end
 
           if Array(id).none?(&:present?)
-            reject = reject_new_record?(association_name, attributes) || false
-            reject ? nil : association.reader.build(attributes.except(*UNASSIGNABLE_KEYS))
+            unless reject_new_record?(association_name, attributes)
+              association.reader.build(attributes.except(*UNASSIGNABLE_KEYS))
+            end
           else
             if existing_record = find_record_by_id(klass, existing_records, id)
               unless call_reject_if(association_name, attributes)
