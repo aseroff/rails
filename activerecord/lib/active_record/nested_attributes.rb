@@ -461,9 +461,9 @@ module ActiveRecord
 
       # Assigns the given attributes to the collection association.
       #
-      # Hashes with an <tt>:id</tt> value matching an existing associated record
-      # will update that record. Hashes without an <tt>:id</tt> value will build
-      # a new record for the association. Hashes with a matching <tt>:id</tt>
+      # Hashes with values matching the primary key of an existing associated record
+      # will update that record. Hashes without matching primary keys will build
+      # a new record for the association. Hashes with a matching primary key
       # value and a <tt>:_destroy</tt> key set to a truthy value will mark the
       # matched record for destruction.
       #
@@ -508,12 +508,21 @@ module ActiveRecord
         end
 
         association = association(association_name)
+        klass = association.klass
+        primary_key_array = Array(klass.primary_key)
 
         existing_records = if association.loaded?
           association.target
         else
-          attribute_ids = attributes_collection.filter_map { |a| a["id"] || a[:id] }
-          attribute_ids.empty? ? [] : association.scope.where(association.klass.primary_key => attribute_ids)
+          if primary_key_array.size == 1
+            pk_col = primary_key_array.first
+            ids = attributes_collection.filter_map do |attrs|
+              attrs[pk_col] || attrs[pk_col.to_sym] || attrs["id"] || attrs[:id]
+            end.compact
+            ids.empty? ? [] : association.scope.where(pk_col => ids)
+          else
+            association.scope.to_a
+          end
         end
 
         records = attributes_collection.map do |attributes|
@@ -522,27 +531,29 @@ module ActiveRecord
           end
           attributes = attributes.with_indifferent_access
 
-          if attributes["id"].blank?
-            unless reject_new_record?(association_name, attributes)
-              association.reader.build(attributes.except(*UNASSIGNABLE_KEYS))
-            end
-          elsif existing_record = find_record_by_id(association.klass, existing_records, attributes["id"])
-            unless call_reject_if(association_name, attributes)
-              # Make sure we are operating on the actual object which is in the association's
-              # proxy_target array (either by finding it, or adding it if not found)
-              # Take into account that the proxy_target may have changed due to callbacks
-              target_record = find_record_by_id(association.klass, association.target, attributes["id"])
-              if target_record
-                existing_record = target_record
-              else
-                association.add_to_target(existing_record, skip_callbacks: true)
-              end
+          pk_tuple = extract_primary_key_tuple(attributes, primary_key_array, association)
 
-              assign_to_or_mark_for_destruction(existing_record, attributes, options[:allow_destroy])
-              existing_record
-            end
+          if pk_tuple.empty? || pk_tuple.all? { |v| v.blank? }
+            reject = reject_new_record?(association_name, attributes) || false
+            reject ? nil : association.reader.build(attributes.except(*UNASSIGNABLE_KEYS))
           else
-            raise_nested_attributes_record_not_found!(association_name, attributes["id"])
+            lookup_value = primary_key_array.size == 1 ? pk_tuple.first : pk_tuple
+
+            if existing_record = find_record_by_id(klass, existing_records, lookup_value)
+              unless call_reject_if(association_name, attributes)
+                target_record = find_record_by_id(klass, association.target, lookup_value)
+                if target_record
+                  existing_record = target_record
+                else
+                  association.add_to_target(existing_record, skip_callbacks: true)
+                end
+
+                assign_to_or_mark_for_destruction(existing_record, attributes, options[:allow_destroy])
+                existing_record
+              end
+            else
+              raise_nested_attributes_record_not_found!(association_name, lookup_value)
+            end
           end
         end
 
@@ -619,17 +630,44 @@ module ActiveRecord
 
       def raise_nested_attributes_record_not_found!(association_name, record_id)
         model = self.class._reflect_on_association(association_name).klass.name
+        record_id = Array(record_id).join(", ")
         raise RecordNotFound.new("Couldn't find #{model} with ID=#{record_id} for #{self.class.name} with ID=#{id}",
                                  model, "id", record_id)
       end
 
       def find_record_by_id(klass, records, id)
-        if klass.composite_primary_key?
-          id = Array(id).map(&:to_s)
-          records.find { |record| Array(record.id).map(&:to_s) == id }
-        else
-          records.find { |record| record.id.to_s == id.to_s }
+        id = Array(id).flatten.compact_blank.map(&:to_s)
+
+        records.find do |record|
+          record_id = Array(record.id).map(&:to_s)
+          next false if record_id.size != id.size
+
+          record_id.zip(id).all? do |rec_val, provided_val|
+            provided_val.blank? || rec_val == provided_val
+          end
         end
+      end
+
+      def extract_primary_key_tuple(attributes, primary_key_array, association)
+        pk_tuple = primary_key_array.map do |pk|
+          val = attributes[pk] || attributes[pk.to_sym]
+          if val.blank? && association.reflection&.foreign_key == pk.to_s
+            association.owner.id
+          else
+            val
+          end
+        end
+
+        if pk_tuple.all?(&:blank?)
+          id_val = attributes["id"] || attributes[:id]
+          if id_val
+            arr = Array(id_val)
+            pk_tuple = arr if arr.size == primary_key_array.size
+          end
+        end
+
+        pk_tuple.flatten! if pk_tuple.any? { |v| v.is_a?(Array) }
+        pk_tuple
       end
   end
 end
