@@ -514,16 +514,15 @@ module ActiveRecord
         existing_records = if association.loaded?
           association.target
         else
-          if klass.composite_primary_key?
-            # This branch needs to return attribute_ids from composite primary keys
-            association.scope.to_a
-          else
-            attribute_ids = attributes_collection.filter_map do |attrs|
-              attrs[primary_key] || attrs[primary_key.to_sym] || attrs["id"] || attrs[:id]
-            end.compact
-            attribute_ids.empty? ? [] : association.scope.where(primary_key => attribute_ids)
+          attribute_ids = attributes_collection.filter_map do |attributes|
+            Array(primary_key).map do |pk|
+              value ||= attributes["id"] || attributes[:id] if pk.to_s == primary_key
+              value ||= association.owner.id if association.reflection.foreign_key.to_s == pk.to_s
+              value || attributes[pk] || attributes[pk.to_sym]
+            end.flatten
           end
-          # attribute_ids.empty? ? [] : association.scope.where(primary_key => attribute_ids)
+          attribute_ids.flatten! unless klass.composite_primary_key?
+          attribute_ids.empty? ? [] : association.scope.where(primary_key => attribute_ids)
         end
 
         records = attributes_collection.map do |attributes|
@@ -532,14 +531,11 @@ module ActiveRecord
           end
           attributes = attributes.with_indifferent_access
 
-          id = if klass.composite_primary_key?
-            primary_key.map do |pk|
-              val = attributes[pk] || attributes[pk.to_sym]
-              association.reflection.foreign_key == pk.to_s ? association.owner.id : val
-            end.flatten
-          else
-            attributes[primary_key] || attributes[primary_key.to_sym] || attributes["id"] || attributes[:id] # shouldn't need these last two.
-          end
+          id = Array(primary_key).map do |pk|
+            value ||= attributes["id"] || attributes[:id] if pk.to_s == primary_key
+            value ||= association.owner.id if association.reflection.foreign_key.to_s == pk.to_s
+            value || attributes[pk] || attributes[pk.to_sym]
+          end.flatten
 
           if Array(id).none?(&:present?)
             unless reject_new_record?(association_name, attributes)
