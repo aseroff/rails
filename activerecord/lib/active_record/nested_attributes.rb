@@ -531,11 +531,15 @@ module ActiveRecord
           end
           attributes = attributes.with_indifferent_access
 
-          id = Array(primary_key).map do |pk|
-            value ||= attributes["id"] || attributes[:id] if pk.to_s == primary_key
-            value ||= association.owner.id if association.reflection.foreign_key.to_s == pk.to_s
-            value || attributes[pk] || attributes[pk.to_sym]
-          end.flatten
+          id = if klass.composite_primary_key?
+            Array(primary_key).map do |pk|
+              value ||= attributes["id"] || attributes[:id] if pk.to_s == primary_key
+              value ||= association.owner.id if association.reflection.foreign_key.to_s == pk.to_s
+              value || attributes[pk] || attributes[pk.to_sym]
+            end.flatten
+          else
+            attributes[primary_key] || attributes[primary_key.to_sym] || attributes["id"] || attributes[:id] # shouldn't need these last two.
+          end
 
           if Array(id).none?(&:present?)
             unless reject_new_record?(association_name, attributes)
@@ -639,7 +643,7 @@ module ActiveRecord
 
       def find_record_by_id(klass, records, id)
         if klass.composite_primary_key?
-          id = Array(id).flatten.compact_blank.map(&:to_s)
+          id = Array(id).map(&:to_s)
           records.find { |record| Array(record.id).map(&:to_s) == id }
         else
           records.find { |record| record.id.to_s == id.to_s }
