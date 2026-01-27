@@ -533,14 +533,16 @@ module ActiveRecord
           end
           attributes = attributes.with_indifferent_access
 
-          pk_tuple = extract_primary_key_tuple(attributes, primary_key_array, association)
+          id = if primary_key.is_a? Array
+            extract_primary_key_tuple(attributes, primary_key_array, association)
+          else
+            extract_primary_key_tuple(attributes, primary_key_array, association).first
+          end
 
-          if pk_tuple.empty? || pk_tuple.all?(&:blank?)
+          if Array(id).none?(&:present?)
             reject = reject_new_record?(association_name, attributes) || false
             reject ? nil : association.reader.build(attributes.except(*UNASSIGNABLE_KEYS))
           else
-            id = primary_key_array.size == 1 ? pk_tuple.first : pk_tuple
-
             if existing_record = find_record_by_id(klass, existing_records, id)
               unless call_reject_if(association_name, attributes)
                 target_record = find_record_by_id(klass, association.target, id)
@@ -668,8 +670,7 @@ module ActiveRecord
           end
         end
 
-        pk_tuple.flatten! if pk_tuple.any? { |v| v.is_a?(Array) }
-        pk_tuple
+        pk_tuple.flatten
       end
   end
 end
