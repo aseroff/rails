@@ -510,7 +510,6 @@ module ActiveRecord
         association = association(association_name)
         klass = association.klass
         primary_key = klass.primary_key
-        primary_key_array = Array(primary_key)
 
         existing_records = if association.loaded?
           association.target
@@ -534,9 +533,12 @@ module ActiveRecord
           attributes = attributes.with_indifferent_access
 
           id = if klass.composite_primary_key?
-            extract_primary_key_tuple(attributes, primary_key_array, association)
+            primary_key.map do |pk|
+              val = attributes[pk] || attributes[pk.to_sym]
+              association.reflection.foreign_key == pk.to_s ? association.owner.id : val
+            end.flatten
           else
-            extract_primary_key_tuple(attributes, primary_key_array, association).first
+            attributes[primary_key] || attributes[primary_key.to_sym] || attributes["id"] || attributes[:id] # shouldn't need these last two.
           end
 
           if Array(id).none?(&:present?)
@@ -646,27 +648,6 @@ module ActiveRecord
         else
           records.find { |record| record.id.to_s == id.to_s }
         end
-      end
-
-      def extract_primary_key_tuple(attributes, primary_key_array, association)
-        pk_tuple = primary_key_array.map do |pk|
-          val = attributes[pk] || attributes[pk.to_sym]
-          if val.blank? && association.reflection&.foreign_key == pk.to_s
-            association.owner.id
-          else
-            val
-          end
-        end
-
-        if pk_tuple.all?(&:blank?)
-          id_val = attributes["id"] || attributes[:id]
-          if id_val
-            arr = Array(id_val)
-            pk_tuple = arr if arr.size == primary_key_array.size
-          end
-        end
-
-        pk_tuple.flatten
       end
   end
 end
