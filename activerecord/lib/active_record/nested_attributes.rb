@@ -545,22 +545,23 @@ module ActiveRecord
             unless reject_new_record?(association_name, attributes)
               association.reader.build(attributes.except(*UNASSIGNABLE_KEYS))
             end
-          else
-            if existing_record = find_record_by_id(klass, existing_records, id)
-              unless call_reject_if(association_name, attributes)
-                target_record = find_record_by_id(klass, association.target, id)
-                if target_record
-                  existing_record = target_record
-                else
-                  association.add_to_target(existing_record, skip_callbacks: true)
-                end
-
-                assign_to_or_mark_for_destruction(existing_record, attributes, options[:allow_destroy])
-                existing_record
+          elsif existing_record = find_record_by_id(klass, existing_records, id)
+            unless call_reject_if(association_name, attributes)
+              # Make sure we are operating on the actual object which is in the association's
+              # proxy_target array (either by finding it, or adding it if not found)
+              # Take into account that the proxy_target may have changed due to callbacks
+              target_record = find_record_by_id(klass, association.target, id)
+              if target_record
+                existing_record = target_record
+              else
+                association.add_to_target(existing_record, skip_callbacks: true)
               end
-            else
-              raise_nested_attributes_record_not_found!(association_name, id)
+
+              assign_to_or_mark_for_destruction(existing_record, attributes, options[:allow_destroy])
+              existing_record
             end
+          else
+            raise_nested_attributes_record_not_found!(association_name, id)
           end
         end
 
