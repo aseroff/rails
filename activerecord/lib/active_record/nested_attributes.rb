@@ -509,20 +509,22 @@ module ActiveRecord
 
         association = association(association_name)
         klass = association.klass
-        primary_key_array = Array(klass.primary_key)
+        primary_key = klass.primary_key
+        primary_key_array = Array(primary_key)
 
         existing_records = if association.loaded?
           association.target
         else
-          if primary_key_array.size == 1
-            pk_col = primary_key_array.first
-            ids = attributes_collection.filter_map do |attrs|
-              attrs[pk_col] || attrs[pk_col.to_sym] || attrs["id"] || attrs[:id]
-            end.compact
-            ids.empty? ? [] : association.scope.where(pk_col => ids)
-          else
+          if primary_key.is_a? Array
+            # This branch needs to return attribute_ids from composite primary keys
             association.scope.to_a
+          else
+            attribute_ids = attributes_collection.filter_map do |attrs|
+              attrs[primary_key] || attrs[primary_key.to_sym] || attrs["id"] || attrs[:id]
+            end.compact
+            attribute_ids.empty? ? [] : association.scope.where(primary_key => attribute_ids)
           end
+          # attribute_ids.empty? ? [] : association.scope.where(primary_key => attribute_ids)
         end
 
         records = attributes_collection.map do |attributes|
@@ -533,15 +535,15 @@ module ActiveRecord
 
           pk_tuple = extract_primary_key_tuple(attributes, primary_key_array, association)
 
-          if pk_tuple.empty? || pk_tuple.all? { |v| v.blank? }
+          if pk_tuple.empty? || pk_tuple.all?(&:blank?)
             reject = reject_new_record?(association_name, attributes) || false
             reject ? nil : association.reader.build(attributes.except(*UNASSIGNABLE_KEYS))
           else
-            lookup_value = primary_key_array.size == 1 ? pk_tuple.first : pk_tuple
+            id = primary_key_array.size == 1 ? pk_tuple.first : pk_tuple
 
-            if existing_record = find_record_by_id(klass, existing_records, lookup_value)
+            if existing_record = find_record_by_id(klass, existing_records, id)
               unless call_reject_if(association_name, attributes)
-                target_record = find_record_by_id(klass, association.target, lookup_value)
+                target_record = find_record_by_id(klass, association.target, id)
                 if target_record
                   existing_record = target_record
                 else
@@ -552,7 +554,7 @@ module ActiveRecord
                 existing_record
               end
             else
-              raise_nested_attributes_record_not_found!(association_name, lookup_value)
+              raise_nested_attributes_record_not_found!(association_name, id)
             end
           end
         end
