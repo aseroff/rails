@@ -515,11 +515,17 @@ module ActiveRecord
           association.target
         else
           attribute_ids = attributes_collection.filter_map do |attributes|
-            Array(primary_key).map do |pk|
-              value ||= attributes["id"] || attributes[:id] if pk.to_s == primary_key
-              value ||= association.owner.id if association.reflection.foreign_key.to_s == pk.to_s
-              value || attributes[pk] || attributes[pk.to_sym]
-            end.flatten
+            if explicit_id = attributes["id"] || attributes[:id]
+              Array(explicit_id)
+            else
+              Array(primary_key).map do |pk|
+                if association.reflection.foreign_key == pk
+                  association.owner.id
+                else
+                  attributes[pk.to_s] || attributes[pk.to_sym]
+                end
+              end.flatten
+            end
           end
           attribute_ids.flatten! unless klass.composite_primary_key?
           attribute_ids.empty? ? [] : association.scope.where(primary_key => attribute_ids)
@@ -531,14 +537,20 @@ module ActiveRecord
           end
           attributes = attributes.with_indifferent_access
 
-          id = Array(primary_key).map do |pk|
-            value ||= attributes["id"] || attributes[:id] if pk.to_s == primary_key
-            value ||= association.owner.id if association.reflection.foreign_key.to_s == pk.to_s
-            value || attributes[pk] || attributes[pk.to_sym]
-          end.flatten
+          id = if explicit_id = attributes["id"] || attributes[:id]
+            Array(explicit_id)
+          else
+            Array(primary_key).map do |pk|
+              if association.reflection.foreign_key == pk
+                association.owner.id
+              else
+                attributes[pk.to_s] || attributes[pk.to_sym]
+              end
+            end.flatten
+          end
           id = id.first if id.one?
 
-          if Array(id).none?(&:present?)
+          if Array(id).any?(&:blank?)
             unless reject_new_record?(association_name, attributes)
               association.reader.build(attributes.except(*UNASSIGNABLE_KEYS))
             end
